@@ -1,3 +1,24 @@
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.18.0"
+
+  name = "my-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = ["us-east-1a", "us-east-1b"]
+  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnets = ["10.0.3.0/24", "10.0.4.0/24"]
+
+  enable_nat_gateway   = true
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
 # ECS Cluster
 module "ecs" {
   source  = "terraform-aws-modules/ecs/aws"
@@ -42,6 +63,8 @@ resource "aws_ecs_task_definition" "nginx_task" {
   requires_compatibilities = ["EC2"]
   network_mode             = "bridge"
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+
+  depends_on = [module.ecs]
 }
 
 resource "aws_ecs_service" "nginx_service" {
@@ -54,7 +77,9 @@ resource "aws_ecs_service" "nginx_service" {
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 
-  depends_on = [aws_autoscaling_group.ecs]
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role" "ecs_task_execution_role" {
@@ -140,33 +165,6 @@ resource "aws_iam_policy_attachment" "ecs_instance_policy" {
   policy_arn = aws_iam_policy.ecs_instance_policy.arn
 }
 
-
-# resource "aws_iam_policy_attachment" "ecs_instance_policy" {
-#   name       = "ecs-instance-policy"
-#   roles      = [aws_iam_role.ecs_instance_role.name]
-#   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerServiceforEC2Role"
-# }
-
-# // Deptrecated 
-# resource "aws_launch_configuration" "ecs" {
-#   name          = "ecs-launch-configuration"
-#   image_id      = data.aws_ami.ecs.id
-#   instance_type = "t3.micro"
-#   key_name      = "ghost-ec2-pool"
-
-#   iam_instance_profile = aws_iam_instance_profile.ecs_instance_profile.name
-#   security_groups      = [aws_security_group.ecs.id]
-
-
-#   root_block_device {
-#     volume_size = 30
-#     volume_type = "gp2"
-#   }
-
-#   lifecycle {
-#     create_before_destroy = true
-#   }
-# }
 resource "aws_launch_template" "ecs" {
   name          = "ecs-launch-template"
   image_id      = data.aws_ami.ecs.id
@@ -202,7 +200,6 @@ resource "aws_launch_template" "ecs" {
     }
   }
 }
-
 
 resource "aws_security_group" "ecs" {
   name        = "ecs-security-group"
@@ -246,6 +243,13 @@ resource "aws_autoscaling_group" "ecs" {
   desired_capacity    = 1
   vpc_zone_identifier = module.vpc.private_subnets
 
+  force_delete = true
+  depends_on   = [aws_ecs_service.nginx_service]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
   tag {
     key                 = "Project"
     value               = var.project_name
@@ -267,6 +271,84 @@ resource "aws_autoscaling_policy" "scale_down" {
   adjustment_type        = "ChangeInCapacity"
   cooldown               = 300
   autoscaling_group_name = aws_autoscaling_group.ecs.name
+}
+
+resource "aws_cloudwatch_metric_alarm" "high_cpu" {
+  alarm_name          = "ecs-cluster-high-cpu"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 75
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.ecs.name
+  }
+
+  alarm_description = "Monitoring of the high CPU utilization in the ECS claster"
+  alarm_actions     = [aws_autoscaling_policy.scale_up.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "low_cpu" {
+  alarm_name          = "ecs-cluster-low-cpu"
+  comparison_operator = "LessThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 30
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.ecs.name
+  }
+
+  alarm_description = "Monitoring of the low CPU utilization in the ECS claster"
+  alarm_actions     = [aws_autoscaling_policy.scale_down.arn]
+}
+
+resource "aws_appautoscaling_target" "ecs_target" {
+  max_capacity       = 10
+  min_capacity       = 1
+  resource_id        = "service/${module.ecs.cluster_name}/${aws_ecs_service.nginx_service.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
+  name               = "ecs-service-cpu-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value       = 70.0
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+  }
+}
+
+resource "aws_appautoscaling_policy" "ecs_policy_memory" {
+  name               = "ecs-service-memory-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+    target_value       = 70.0
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+  }
 }
 
 resource "aws_cloudwatch_log_group" "ecs_log_group" {
