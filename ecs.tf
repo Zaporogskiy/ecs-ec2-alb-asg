@@ -1,38 +1,17 @@
-
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "5.18.0"
-
-  name = "my-vpc"
-  cidr = "10.0.0.0/16"
-
-  azs             = ["us-east-1a", "us-east-1b"]
-  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
-  private_subnets = ["10.0.3.0/24", "10.0.4.0/24"]
-
-  enable_nat_gateway   = true
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-
-  tags = {
-    Project = var.project_name
-  }
-}
-
 # ECS Cluster
 module "ecs" {
   source  = "terraform-aws-modules/ecs/aws"
   version = "5.11.4"
 
-  cluster_name = "my-ecs-cluster"
+  cluster_name = "${var.project_name}-cluster"
 
   tags = {
     Project = var.project_name
   }
 }
 
-resource "aws_ecs_task_definition" "nginx_task" {
-  family = "nginx-task"
+resource "aws_ecs_task_definition" "ecs_task" {
+  family = "${var.project_name}-task"
   container_definitions = jsonencode([
     {
       name      = "${var.project_name}-task"
@@ -80,7 +59,7 @@ resource "aws_ecs_task_definition" "nginx_task" {
         options = {
           "awslogs-group"         = aws_cloudwatch_log_group.ecs_log_group.name
           "awslogs-region"        = "us-east-1"
-          "awslogs-stream-prefix" = "nginx"
+          "awslogs-stream-prefix" = "${var.project_name}"
         }
       }
     }
@@ -92,10 +71,10 @@ resource "aws_ecs_task_definition" "nginx_task" {
   depends_on = [module.ecs]
 }
 
-resource "aws_ecs_service" "nginx_service" {
-  name            = "nginx-service"
+resource "aws_ecs_service" "ecs_service" {
+  name            = "${var.project_name}-service"
   cluster         = module.ecs.cluster_id
-  task_definition = aws_ecs_task_definition.nginx_task.arn
+  task_definition = aws_ecs_task_definition.ecs_task.arn
   desired_count   = 1
   launch_type     = "EC2"
 
@@ -121,7 +100,7 @@ resource "aws_ecs_service" "nginx_service" {
 }
 
 resource "aws_iam_role" "ecs_task_execution_role" {
-  name = "ecs-task-execution-role"
+  name = "${var.project_name}-ecs-task-execution-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -144,13 +123,13 @@ resource "aws_iam_policy_attachment" "ecs_task_execution_policy" {
 }
 
 resource "aws_iam_instance_profile" "ecs_instance_profile" {
-  name = "ecs-instance-profile"
+  name = "${var.project_name}-ecs-instance-profile"
 
   role = aws_iam_role.ecs_instance_role.name
 }
 
 resource "aws_iam_role" "ecs_instance_role" {
-  name = "ecs-instance-role"
+  name = "${var.project_name}-ecs-instance-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -167,7 +146,7 @@ resource "aws_iam_role" "ecs_instance_role" {
 }
 
 resource "aws_iam_policy" "ecs_instance_policy" {
-  name        = "ECSInstancePolicy"
+  name        = "${var.project_name}-ECSInstancePolicy"
   description = "Policy for EC2 instances in ECS cluster"
 
   policy = jsonencode({
@@ -198,16 +177,16 @@ resource "aws_iam_policy" "ecs_instance_policy" {
 }
 
 resource "aws_iam_policy_attachment" "ecs_instance_policy" {
-  name       = "ecs-instance-policy"
+  name       = "${var.project_name}-ecs-instance-policy"
   roles      = [aws_iam_role.ecs_instance_role.name]
   policy_arn = aws_iam_policy.ecs_instance_policy.arn
 }
 
 resource "aws_launch_template" "ecs" {
-  name          = "ecs-launch-template"
+  name          = "${var.project_name}-ecs-launch-template"
   image_id      = data.aws_ami.ecs.id
   instance_type = "t4g.micro"
-  key_name      = "ghost-ec2-pool"
+  key_name      = "ghost-ec2-pool" // todo leftover
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ecs_instance_profile.name
@@ -240,7 +219,7 @@ resource "aws_launch_template" "ecs" {
 }
 
 resource "aws_security_group" "ecs" {
-  name        = "ecs-security-group"
+  name        = "${var.project_name}-ecs-security-group"
   description = "Allow traffic to ECS instances"
   vpc_id      = module.vpc.vpc_id
 
@@ -271,7 +250,7 @@ resource "aws_security_group" "ecs" {
 }
 
 resource "aws_autoscaling_group" "ecs" {
-  name = "ecs-autoscaling-group"
+  name = "${var.project_name}-ecs-autoscaling-group"
   launch_template {
     id      = aws_launch_template.ecs.id
     version = "$Latest"
@@ -282,7 +261,7 @@ resource "aws_autoscaling_group" "ecs" {
   vpc_zone_identifier = module.vpc.private_subnets
 
   force_delete = true
-  depends_on   = [aws_ecs_service.nginx_service]
+  depends_on   = [aws_ecs_service.ecs_service]
 
   lifecycle {
     create_before_destroy = true
@@ -312,7 +291,7 @@ resource "aws_autoscaling_policy" "scale_down" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "high_cpu" {
-  alarm_name          = "ecs-cluster-high-cpu"
+  alarm_name          = "${var.project_name}-ecs-cluster-high-cpu"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 2
   metric_name         = "CPUUtilization"
@@ -330,7 +309,7 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "low_cpu" {
-  alarm_name          = "ecs-cluster-low-cpu"
+  alarm_name          = "${var.project_name}-ecs-cluster-low-cpu"
   comparison_operator = "LessThanOrEqualToThreshold"
   evaluation_periods  = 2
   metric_name         = "CPUUtilization"
@@ -350,13 +329,13 @@ resource "aws_cloudwatch_metric_alarm" "low_cpu" {
 resource "aws_appautoscaling_target" "ecs_target" {
   max_capacity       = 10
   min_capacity       = 1
-  resource_id        = "service/${module.ecs.cluster_name}/${aws_ecs_service.nginx_service.name}"
+  resource_id        = "service/${module.ecs.cluster_name}/${aws_ecs_service.ecs_service.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
 }
 
 resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
-  name               = "ecs-service-cpu-scaling"
+  name               = "${var.project_name}-ecs-service-cpu-scaling"
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.ecs_target.resource_id
   scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
@@ -373,7 +352,7 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
 }
 
 resource "aws_appautoscaling_policy" "ecs_policy_memory" {
-  name               = "ecs-service-memory-scaling"
+  name               = "${var.project_name}-ecs-service-memory-scaling"
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.ecs_target.resource_id
   scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
@@ -390,7 +369,7 @@ resource "aws_appautoscaling_policy" "ecs_policy_memory" {
 }
 
 resource "aws_cloudwatch_log_group" "ecs_log_group" {
-  name = "/ecs/nginx-container"
+  name = "/ecs/${var.project_name}-container"
 }
 
 data "aws_ami" "ecs" {

@@ -1,6 +1,5 @@
 variable "project_name" {
-  default = "education"
-
+  default = "ai-calling-transfer"
 }
 
 variable "ultravox_api_key" {
