@@ -35,8 +35,8 @@ resource "aws_ecs_task_definition" "nginx_task" {
   family = "nginx-task"
   container_definitions = jsonencode([
     {
-      name      = "nginx-container"
-      image     = "595140864345.dkr.ecr.us-east-1.amazonaws.com/nginx-200-ok:latest"
+      name      = "${var.project_name}-task"
+      image     = "595140864345.dkr.ecr.us-east-1.amazonaws.com/ultravox-jambonz-agent:latest"
       memory    = 512
       cpu       = 256
       essential = true
@@ -47,9 +47,26 @@ resource "aws_ecs_task_definition" "nginx_task" {
           protocol      = "tcp"
         }
       ]
-      command = [
-        "nginx", "-g", "daemon off;"
+
+      environment = [
+        {
+          name  = "ULTRAVOX_API_KEY",
+          value = var.ultravox_api_key
+        },
+        {
+          name  = "HUMAN_AGENT_CALLERID",
+          value = var.human_agent_callerid
+        },
+        {
+          name  = "HUMAN_AGENT_TRUNK",
+          value = var.human_agent_trunk
+        },
+        {
+          name  = "HUMAN_AGENT_NUMBER",
+          value = var.human_agent_number
+        }
       ]
+
       logConfiguration = {
         logDriver = "awslogs"
         options = {
