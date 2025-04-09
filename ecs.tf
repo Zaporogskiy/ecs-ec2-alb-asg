@@ -5,9 +5,8 @@ module "ecs" {
 
   cluster_name = "${var.project_name}-cluster"
 
-  tags = {
-    Project = var.project_name
-  }
+
+  tags = local.tags
 }
 
 resource "aws_ecs_task_definition" "ecs_task" {
@@ -69,6 +68,7 @@ resource "aws_ecs_task_definition" "ecs_task" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
 
   depends_on = [module.ecs]
+  tags       = local.tags
 }
 
 resource "aws_ecs_service" "ecs_service" {
@@ -97,6 +97,7 @@ resource "aws_ecs_service" "ecs_service" {
   }
 
   depends_on = [aws_lb_listener.http]
+  tags       = local.tags
 }
 
 resource "aws_iam_role" "ecs_task_execution_role" {
@@ -114,6 +115,7 @@ resource "aws_iam_role" "ecs_task_execution_role" {
       }
     ]
   })
+  tags = local.tags
 }
 
 resource "aws_iam_policy_attachment" "ecs_task_execution_policy" {
@@ -126,6 +128,7 @@ resource "aws_iam_instance_profile" "ecs_instance_profile" {
   name = "${var.project_name}-ecs-instance-profile"
 
   role = aws_iam_role.ecs_instance_role.name
+  tags = local.tags
 }
 
 resource "aws_iam_role" "ecs_instance_role" {
@@ -143,6 +146,7 @@ resource "aws_iam_role" "ecs_instance_role" {
       }
     ]
   })
+  tags = local.tags
 }
 
 resource "aws_iam_policy" "ecs_instance_policy" {
@@ -174,6 +178,7 @@ resource "aws_iam_policy" "ecs_instance_policy" {
       }
     ]
   })
+  tags = local.tags
 }
 
 resource "aws_iam_policy_attachment" "ecs_instance_policy" {
@@ -186,7 +191,7 @@ resource "aws_launch_template" "ecs" {
   name          = "${var.project_name}-ecs-launch-template"
   image_id      = data.aws_ami.ecs.id
   instance_type = "t4g.micro"
-  key_name      = "ghost-ec2-pool" // todo leftover
+  key_name      = "ai-calling-transfer" // todo leftover
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ecs_instance_profile.name
@@ -212,10 +217,9 @@ resource "aws_launch_template" "ecs" {
 
   tag_specifications {
     resource_type = "instance"
-    tags = {
-      Project = var.project_name
-    }
+    tags          = local.tags
   }
+  tags = local.tags
 }
 
 resource "aws_security_group" "ecs" {
@@ -244,9 +248,7 @@ resource "aws_security_group" "ecs" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Project = var.project_name
-  }
+  tags = local.tags
 }
 
 resource "aws_autoscaling_group" "ecs" {
@@ -306,6 +308,7 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
 
   alarm_description = "Monitoring of the high CPU utilization in the ECS claster"
   alarm_actions     = [aws_autoscaling_policy.scale_up.arn]
+  tags              = local.tags
 }
 
 resource "aws_cloudwatch_metric_alarm" "low_cpu" {
@@ -324,6 +327,7 @@ resource "aws_cloudwatch_metric_alarm" "low_cpu" {
 
   alarm_description = "Monitoring of the low CPU utilization in the ECS claster"
   alarm_actions     = [aws_autoscaling_policy.scale_down.arn]
+  tags              = local.tags
 }
 
 resource "aws_appautoscaling_target" "ecs_target" {
@@ -332,6 +336,7 @@ resource "aws_appautoscaling_target" "ecs_target" {
   resource_id        = "service/${module.ecs.cluster_name}/${aws_ecs_service.ecs_service.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+  tags               = local.tags
 }
 
 resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
@@ -370,6 +375,7 @@ resource "aws_appautoscaling_policy" "ecs_policy_memory" {
 
 resource "aws_cloudwatch_log_group" "ecs_log_group" {
   name = "/ecs/${var.project_name}-container"
+  tags = local.tags
 }
 
 data "aws_ami" "ecs" {
@@ -385,6 +391,7 @@ data "aws_ami" "ecs" {
     name   = "architecture"
     values = ["arm64"]
   }
+  tags = local.tags
 }
 #  ALB
 resource "aws_lb" "main" {
@@ -398,9 +405,7 @@ resource "aws_lb" "main" {
 
   enable_deletion_protection = false
 
-  tags = {
-    Project = var.project_name
-  }
+  tags = local.tags
 }
 
 # Целевая группа для ALB
@@ -431,9 +436,7 @@ resource "aws_lb_target_group" "app" {
     matcher             = "200"
   }
 
-  tags = {
-    Project = var.project_name
-  }
+  tags = local.tags
 }
 
 resource "aws_lb_listener" "http" {
@@ -445,6 +448,7 @@ resource "aws_lb_listener" "http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app.arn
   }
+  tags = local.tags
 }
 
 resource "aws_security_group" "alb" {
@@ -467,7 +471,5 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Project = var.project_name
-  }
+  tags = local.tags
 }
