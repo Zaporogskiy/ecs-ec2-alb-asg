@@ -67,6 +67,14 @@ resource "aws_ecs_task_definition" "nginx_task" {
         }
       ]
 
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      }
+
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -94,9 +102,22 @@ resource "aws_ecs_service" "nginx_service" {
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app.arn
+    container_name   = "${var.project_name}-task"
+    container_port   = 3000
+  }
+
+  ordered_placement_strategy {
+    type  = "spread"
+    field = "instanceId"
+  }
+
   lifecycle {
     create_before_destroy = true
   }
+
+  depends_on = [aws_lb_listener.http]
 }
 
 resource "aws_iam_role" "ecs_task_execution_role" {
@@ -231,10 +252,10 @@ resource "aws_security_group" "ecs" {
   }
 
   ingress {
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Доступ к контейнеру
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
   }
 
   egress {
@@ -384,5 +405,90 @@ data "aws_ami" "ecs" {
   filter {
     name   = "architecture"
     values = ["arm64"]
+  }
+}
+#  ALB
+resource "aws_lb" "main" {
+  name               = "${var.project_name}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = module.vpc.public_subnets
+
+  idle_timeout = 60
+
+  enable_deletion_protection = false
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
+# Целевая группа для ALB
+resource "aws_lb_target_group" "app" {
+  name        = "${var.project_name}-target-group"
+  port        = 3000
+  protocol    = "HTTP"
+  vpc_id      = module.vpc.vpc_id
+  target_type = "instance"
+
+  stickiness {
+    type            = "lb_cookie"
+    cookie_duration = 86400
+    enabled         = true
+  }
+
+  deregistration_delay = 60
+
+  health_check {
+    enabled             = true
+    interval            = 30
+    path                = "/health"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    timeout             = 5
+    matcher             = "200"
+  }
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+}
+
+resource "aws_security_group" "alb" {
+  name        = "${var.project_name}-alb-sg"
+  description = "ALB Security Group"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    description = "HTTP from internet"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Project = var.project_name
   }
 }

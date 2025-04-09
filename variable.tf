@@ -13,7 +13,6 @@ variable "human_agent_callerid" {
 
 variable "human_agent_trunk" {
   sensitive = true
-
 }
 
 variable "human_agent_number" {
