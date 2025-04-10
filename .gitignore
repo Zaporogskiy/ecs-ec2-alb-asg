@@ -4,3 +4,4 @@
 cache
 .idea
 variable-backup
+load_test.sh

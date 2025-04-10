@@ -415,7 +415,7 @@ resource "aws_lb" "main" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = module.vpc.public_subnets
 
-  idle_timeout = 60
+  idle_timeout = 120
 
   enable_deletion_protection = false
 
@@ -438,7 +438,7 @@ resource "aws_lb_target_group" "app" {
     enabled         = true
   }
 
-  deregistration_delay = 60
+  deregistration_delay = 120
 
   health_check {
     enabled             = true
