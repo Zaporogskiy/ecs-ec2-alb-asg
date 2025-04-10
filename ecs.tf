@@ -36,7 +36,7 @@ resource "aws_ecs_task_definition" "nginx_task" {
   container_definitions = jsonencode([
     {
       name      = "${var.project_name}-task"
-      image     = "595140864345.dkr.ecr.us-east-1.amazonaws.com/ultravox-jambonz-agent:latest"
+      image     = "145023101518.dkr.ecr.us-east-1.amazonaws.com/ultravox-jambonz-agent:latest"
       memory    = 512
       cpu       = 256
       essential = true
@@ -68,7 +68,7 @@ resource "aws_ecs_task_definition" "nginx_task" {
       ]
 
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+        command     = ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', (res) => { if (res.statusCode === 200) { process.exit(0); } else { console.log('Status:', res.statusCode); process.exit(1); } }).on('error', (e) => { console.error(e); process.exit(1); })\""]
         interval    = 30
         timeout     = 5
         retries     = 3
@@ -207,7 +207,7 @@ resource "aws_launch_template" "ecs" {
   name          = "ecs-launch-template"
   image_id      = data.aws_ami.ecs.id
   instance_type = "t4g.micro"
-  key_name      = "ghost-ec2-pool"
+  key_name      = "ai-calling-transfer"
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ecs_instance_profile.name
